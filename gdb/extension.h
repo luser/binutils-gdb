@@ -264,4 +264,6 @@ extern struct type *get_xmethod_result_type (struct xmethod_worker *,
 					     struct value *object,
 					     struct value **args, int nargs);
 
+extern char *ext_lang_find_source (const char* filename);
+
 #endif /* EXTENSION_H */

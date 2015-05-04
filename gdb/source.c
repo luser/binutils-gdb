@@ -20,6 +20,7 @@
 #include "arch-utils.h"
 #include "symtab.h"
 #include "expression.h"
+#include "extension.h"
 #include "language.h"
 #include "command.h"
 #include "source.h"
@@ -1098,6 +1099,25 @@ find_and_open_source (const char *filename,
       if (p != filename)
 	result = openp (path, OPF_SEARCH_IN_PATH | OPF_RETURN_REALPATH, p,
 			OPEN_MODE, fullname);
+    }
+
+  if (result < 0)
+    {
+      /* Didn't work.  Ask extension languages if they can find it.  */
+      char *found_filename = ext_lang_find_source (filename);
+
+      if (found_filename != NULL)
+        {
+	  result = open (found_filename, OPEN_MODE);
+	  if (result >= 0)
+	    {
+	      *fullname = found_filename;
+	    }
+	  else
+	    {
+	      make_cleanup (xfree, found_filename);
+	    }
+	}
     }
 
   do_cleanups (cleanup);
