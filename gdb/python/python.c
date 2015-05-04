@@ -152,6 +152,9 @@ static void gdbpy_set_quit_flag (const struct extension_language_defn *);
 static int gdbpy_check_quit_flag (const struct extension_language_defn *);
 static enum ext_lang_rc gdbpy_before_prompt_hook
   (const struct extension_language_defn *, const char *current_gdb_prompt);
+static enum ext_lang_rc gdbpy_find_source_hook
+(const struct extension_language_defn *, const char *filename,
+ char **found_filename);
 
 /* The interface between gdb proper and loading of python scripts.  */
 
@@ -189,6 +192,7 @@ const struct extension_language_ops python_extension_ops =
   gdbpy_check_quit_flag,
 
   gdbpy_before_prompt_hook,
+  gdbpy_find_source_hook,
 
   gdbpy_get_matching_xmethod_workers,
 };
@@ -1154,6 +1158,79 @@ gdbpy_before_prompt_hook (const struct extension_language_defn *extlang,
 		}
 
 	      set_prompt (prompt.get ());
+	      return EXT_LANG_RC_OK;
+	    }
+	}
+    }
+
+  return EXT_LANG_RC_NOP;
+}
+
+/* This is the extension_language_ops.find_source "method".  */
+
+static enum ext_lang_rc
+gdbpy_find_source_hook (const struct extension_language_defn *extlang,
+			const char *filename,
+			char **found_filename)
+{
+  char *result = NULL;
+
+  if (!gdb_python_initialized)
+    return EXT_LANG_RC_NOP;
+
+  gdbpy_enter enter_py (get_current_arch (), current_language);
+
+  if (gdb_python_module
+      && PyObject_HasAttrString (gdb_python_module, "find_source_hook"))
+    {
+      gdbpy_ref<> hook (PyObject_GetAttrString (gdb_python_module,
+						"find_source_hook"));
+      if (hook == NULL)
+	{
+	  gdbpy_print_stack ();
+	  return EXT_LANG_RC_ERROR;
+	}
+
+      if (PyCallable_Check (hook.get ()))
+	{
+	  gdbpy_ref<> in_filename (PyString_FromString (filename));
+	  if (in_filename == NULL)
+	    {
+	      gdbpy_print_stack ();
+	      return EXT_LANG_RC_ERROR;
+	    }
+
+	  gdbpy_ref<> result (PyObject_CallFunctionObjArgs (hook.get (),
+							    in_filename.get (), NULL));
+	  if (result == NULL)
+	    {
+	      gdbpy_print_stack ();
+	      return EXT_LANG_RC_ERROR;
+	    }
+
+	  /* Return type should be None, or a String.  If it is None,
+	     fall through.  If it is a string, set FOUND_FILENAME.
+	     Anything else, set an exception.  */
+	  if (result != Py_None && ! PyString_Check (result.get ()))
+	    {
+	      PyErr_Format (PyExc_RuntimeError,
+			    _("Return from find_source_hook must " \
+			      "be either a Python string, or None"));
+	      gdbpy_print_stack ();
+	      return EXT_LANG_RC_ERROR;
+	    }
+
+	  if (result != Py_None)
+	    {
+	      gdb::unique_xmalloc_ptr<char>
+		filename (python_string_to_host_string (result.get ()));
+	      if (filename == NULL)
+		{
+		  gdbpy_print_stack ();
+		  return EXT_LANG_RC_ERROR;
+		}
+
+	      *found_filename = filename.release ();
 	      return EXT_LANG_RC_OK;
 	    }
 	}
